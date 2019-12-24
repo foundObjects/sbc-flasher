@@ -13,6 +13,9 @@ if [[ "$(id -u)" -ne "0" ]]; then
   exit 1
 fi
 
+# set debug trace early so we catch argument parsing
+#[[ $* =~ (^|[[:blank:]])(-x|--debug)($|[[:blank:]]) ]] && set -x
+
 __main() {
   verify_only=''
   write_only=''
@@ -41,7 +44,7 @@ __main() {
         ;;
       --help)
         _usage
-        exit
+        exit 0
         ;;
       --) # end argument parsing
         shift
@@ -60,44 +63,45 @@ __main() {
   done
   set -- "${PARAMS[@]}"
 
-  # dump execution during debug
+  # set debug trace after argument parsing
   [[ $debug ]] && set -x
 
-  # check for pv :|
-  [[ $nopv ]] || if ! which pv >&/dev/null; then
-    _warn "Warning: pv not found in path. Install pv ('sudo apt install pv' on Debian) for progress meters."
-    nopv='true'
-  fi
-
-  # standard flow: write image, then verify
-  # if --(thing)-only flag passed then just (thing)
-
-  if [[ -r "$1" ]] && [[ -b "$2" ]] &&
-    ! [[ $write_only && $verify_only ]]; then
-    # $1 is a readable file, $2 is a block device, flags parsed
-
-    [[ $verify_only ]] || if _write "$1" "$2"; then
-      echo "Write successful"
-    else
-      echo "Write failed"
-      exit 1
-    fi
-    [[ $write_only ]] || if _verify "$1" "$2"; then
-      echo "Image verified successfully"
-    else
-      echo "Verify failed"
-      exit 1
-    fi
-  else
+  # verify $1 is a readable file, $2 is a block device, not trying to do two --only things
+  if ! { [[ -r "$1" ]] && [[ -b "$2" ]]; } ||
+    [[ $write_only && $verify_only ]]; then
+    #echo "YUO DUN GOOFED"
     _usage
     exit 1
   fi
+
+  # check for pv :|
+  [[ $nopv ]] || if ! type -p pv >&/dev/null; then
+    _warn "pv not found in path. Install pv ('sudo apt install pv' on Debian) for progress meters."
+    nopv='true'
+  fi
+
+  # write image, then verify; if --(thing)-only flag passed then just (thing)
+
+  [[ $verify_only ]] || if _write "$1" "$2"; then
+    echo "Write successful"
+  else
+    echo "Write failed"
+    exit 1
+  fi
+
+  [[ $write_only ]] || if _verify "$1" "$2"; then
+    echo "Image verified successfully"
+  else
+    echo "Verify failed"
+    exit 1
+  fi
+
   exit 0
 }
 
 _usage() {
   cat <<-END
-		Usage: $0 (--flags) image(.img|.xz) /dev/target_block_device
+		Usage: $(basename $0) (--flags) image(.img|.xz) /dev/target_block_device
 
 		Flags:
 		  -W | --write-only  | --write    Write pass only, no verification
@@ -107,8 +111,6 @@ _usage() {
 
 END
 }
-
-_warn() { echo "$@" >&2; }
 
 _verify() (
   set -euo pipefail &>/dev/null
@@ -165,5 +167,7 @@ _write() (
       ;;
   esac
 )
+
+_warn() { echo "Warning: $*" >&2; }
 
 __main "$@"

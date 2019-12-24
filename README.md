@@ -5,12 +5,12 @@ SBC image writer script with media verification and compressed image support.
 ```
 bash <(wget -o /dev/null -qO- https://raw.githubusercontent.com/foundObjects/sbc-flasher/master/install.sh)
 
-# Debian/Ubuntu users: install pv
+# Debian/Ubuntu users:
 sudo apt install -y pv
-```
-Note: The installer will call sudo to install to /usr/local/sbin as needed, there's no need to run it with sudo or as root.
 
-Other distributions: Install 'pv' from your distribution package repository for pretty progress meters.
+# Other distributions, install pv from your distro repository
+```
+Note: The installer will call sudo to install to /usr/local/sbin when needed, there's no need to run it with sudo or as root.
 
 ### Use
 ```
