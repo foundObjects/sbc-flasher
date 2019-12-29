@@ -8,10 +8,13 @@
 #
 # usage: flasher.sh (--flags) image target
 
-if [[ "$(id -u)" -ne "0" ]]; then
+if [ "$(id -u)" -ne "0" ]; then
   echo "This script requires root."
   exit 1
 fi
+
+set -euo pipefail
+unalias -a
 
 # set debug trace early so we catch argument parsing
 #[[ $* =~ (^|[[:blank:]])(-x|--debug)($|[[:blank:]]) ]] && set -x
@@ -67,7 +70,8 @@ __main() {
   [[ $debug ]] && set -x
 
   # verify $1 is a readable file, $2 is a block device, not trying to do two --only things
-  if ! { [[ -r "$1" ]] && [[ -b "$2" ]]; } ||
+  if (("$#" < "2")) ||
+    ! { [[ -r "$1" ]] && [[ -b "$2" ]]; } ||
     [[ $write_only && $verify_only ]]; then
     #echo "YUO DUN GOOFED"
     _usage
@@ -113,8 +117,16 @@ END
 }
 
 _verify() (
-  set -euo pipefail &>/dev/null
-  case "$(file -b "$1")" in
+  case "$(file -bz "$1")" in
+    "DOS/MBR boot sector;"*"(XZ compressed data)")
+      echo "Verifying xz image"
+      _size="$(xz --robot --list "$1" | awk '/totals/ { print $5 }')"
+      if [[ $nopv ]]; then
+        xz -T0 -dkqc "$1" | cmp -bl -n "$_size" "$2"
+      else
+        pv -s "$_size" <(xz -T0 -dkqc "$1") | cmp -s -n "$_size" "$2"
+      fi
+      ;;
     "DOS/MBR boot sector;"*)
       echo "Verifying raw image"
       _size="$(stat -c '%s' "$1")"
@@ -122,15 +134,6 @@ _verify() (
         cmp -bl -n "$_size" "$1" "$2"
       else
         pv -s "$_size" "$1" | cmp -s -n "$_size" "$2"
-      fi
-      ;;
-    "XZ compressed data")
-      echo "Verifying xz image"
-      _size="$(xz --robot --list "$1" | grep totals | awk '{ print $5 }')"
-      if [[ $nopv ]]; then
-        xz -T0 -dkqc "$1" | cmp -bl -n "$_size" "$2"
-      else
-        pv -s "$_size" <(xz -T0 -dkqc "$1") | cmp -s -n "$_size" "$2"
       fi
       ;;
     *)
@@ -141,24 +144,23 @@ _verify() (
 )
 
 _write() (
-  set -euo pipefail &>/dev/null
-  case $(file -b "$1") in
+  case "$(file -bz "$1")" in
+    "DOS/MBR boot sector;"*"(XZ compressed data)")
+      echo "Writing xz compressed image to $2"
+      _size="$(xz --robot --list "$1" | awk '/totals/ { print $5 }')"
+      if [[ $nopv ]]; then
+        xz -T0 -dkqc "$1" | dd of="$2" bs=4M conv=fsync status=progress
+      else
+        pv -s "$_size" <(xz -T0 -dkqc "$1") | dd of="$2" bs=4M conv=fsync
+      fi
+      ;;
     "DOS/MBR boot sector;"*)
-      echo "writing raw image to $2"
+      echo "Writing raw image to $2"
       _size="$(stat -c '%s' "$1")"
       if [[ $nopv ]]; then
         dd if="$1" of="$2" bs=4M conv=fsync status=progress
       else
         pv -s "$_size" "$1" | dd of="$2" bs=4M conv=fsync
-      fi
-      ;;
-    "XZ compressed data")
-      echo "writing xz compressed image to $2"
-      _size="$(xz --robot --list "$1" | grep totals | awk '{ print $5 }')"
-      if [[ $nopv ]]; then
-        xz -T0 -dkqc "$1" | dd of="$2" bs=4M conv=fsync status=progress
-      else
-        pv -s "$_size" <(xz -T0 -dkqc "$1") | dd of="$2" bs=4M conv=fsync
       fi
       ;;
     *)
@@ -171,3 +173,13 @@ _write() (
 _warn() { echo "Warning: $*" >&2; }
 
 __main "$@"
+
+# TODO Notes:
+#
+# add support for other archive types:
+#   bz2     it's not possible to get compressed size without a full decompression pass:
+#           https://unix.stackexchange.com/questions/546465/bzip2-check-files-decompressed-size-without-actually-decompressing-it
+#   gzip    reported sizes can be wrong
+#           https://superuser.com/questions/619591/how-can-i-get-the-uncompressed-size-of-gzip-file-without-actually-decompressing
+#   tar.*   getting a single file out of an archive adds a whole new layer of complexity
+#   zip     ^
